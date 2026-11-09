@@ -1,0 +1,11 @@
+
+{
+  "name": "Mitooma Vocational Secondary School Management System",
+  "short_name": "Mitooma School",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#f4f6f8",
+  "theme_color": "#1b5e20",
+  "description": "Offline-first school management system"
+}
