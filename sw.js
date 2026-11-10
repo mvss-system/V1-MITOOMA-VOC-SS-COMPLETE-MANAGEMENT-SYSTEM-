@@ -1,0 +1,85 @@
+
+/* Mitooma VSS offline-first service worker — forced app-shell refresh */
+const CACHE_VERSION = 'mvss-app-shell-v3';
+const APP_SHELL = ['./', './index.html', './manifest.webmanifest'];
+
+function isApprovedLibrary(url) {
+  if (url.hostname === 'cdnjs.cloudflare.com') {
+    return url.pathname.startsWith('/ajax/libs/html2pdf.js/') ||
+           url.pathname.startsWith('/ajax/libs/pdf-lib/');
+  }
+  if (url.hostname === 'www.gstatic.com') {
+    return url.pathname.startsWith('/firebasejs/9.22.1/');
+  }
+  return false;
+}
+
+function isSameOriginStatic(request, url) {
+  if (url.origin !== self.location.origin || request.mode === 'navigate') return false;
+  return ['script', 'style', 'image', 'font', 'manifest'].includes(request.destination);
+}
+
+self.addEventListener('install', event => {
+  event.waitUntil((async () => {
+    const cache = await caches.open(CACHE_VERSION);
+    await Promise.all(APP_SHELL.map(async path => {
+      const request = new Request(path, { cache: 'reload' });
+      const response = await fetch(request);
+      if (!response.ok) throw new Error(`Unable to refresh app shell: ${path} (${response.status})`);
+      await cache.put(path, response);
+    }));
+    await self.skipWaiting();
+  })());
+});
+
+self.addEventListener('activate', event => {
+  event.waitUntil((async () => {
+    const keys = await caches.keys();
+    await Promise.all(keys
+      .filter(key => key.startsWith('mvss-app-shell-') && key !== CACHE_VERSION)
+      .map(key => caches.delete(key)));
+    await self.clients.claim();
+  })());
+});
+
+self.addEventListener('fetch', event => {
+  const request = event.request;
+  if (request.method !== 'GET') return;
+  const url = new URL(request.url);
+
+  if (url.origin === self.location.origin && request.mode === 'navigate') {
+    event.respondWith((async () => {
+      try {
+        const response = await fetch(request, { cache: 'no-store' });
+        if (response && response.ok) {
+          const cache = await caches.open(CACHE_VERSION);
+          await cache.put('./index.html', response.clone());
+        }
+        return response;
+      } catch (error) {
+        return (await caches.match('./index.html')) ||
+               (await caches.match('./')) || Response.error();
+      }
+    })());
+    return;
+  }
+
+  const approvedLibrary = isApprovedLibrary(url) && request.destination === 'script';
+  if (approvedLibrary || isSameOriginStatic(request, url)) {
+    event.respondWith((async () => {
+      const cache = await caches.open(CACHE_VERSION);
+      const cached = await cache.match(request);
+      const refresh = fetch(request).then(async response => {
+        if (response && (response.ok || response.type === 'opaque')) {
+          await cache.put(request, response.clone());
+        }
+        return response;
+      });
+      if (cached) {
+        event.waitUntil(refresh.catch(() => {}));
+        return cached;
+      }
+      return refresh;
+    })());
+  }
+});
